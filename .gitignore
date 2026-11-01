@@ -1,0 +1,22 @@
+# ---- 运行时二进制（体积大，自己准备）----
+tools/scrcpy-win64-v5.0.1/
+tools/ffmpeg/
+tools/android/
+
+# ---- 构建产物 ----
+build/
+
+# ---- 运行时状态 ----
+cam_bubble.cfg.json
+device.state.json
+cam_bubble.exit
+
+# ---- Python ----
+__pycache__/
+*.pyc
+.venv/
+
+# ---- Windows ----
+Thumbs.db
+desktop.ini
+*.idsig
