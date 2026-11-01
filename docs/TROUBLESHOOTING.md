@@ -37,6 +37,39 @@ adb shell am start -n dev.local.camstream/.MainActivity
 
 顺序很重要：**先停 LBE，再 grant，再冷启**。另外**别反复重装**，`pm install -r` 会把 MIUI 那边的授权重置。
 
+### 手机重启后：LBE（安全中心）一直崩，相机权限链坏掉
+
+**原因**：改 MIUI 白名单时把 `wake_path.db` 的属主写成了 `system:system`，但 LBE 的
+`/data/data/com.lbe.security.miui` 目录属主是 `u0_a96:u0_a96`，于是开机时它打不开库：
+
+```
+java.lang.RuntimeException: Unable to create application com.lbe.security.LBEApplication:
+SQLiteCantOpenDatabaseException: File .../wake_path.db is not readable
+```
+
+**处理**：属主要跟**目录本身**一致，不是固定的 `system`：
+
+```powershell
+adb shell su -c 'sh /data/local/tmp/fix_lbe_db_owner.sh'   # scripts/fix_lbe_db_owner.sh
+```
+
+`scripts/apply_miui_whitelist.sh` 已经改成 `chown $(stat -c %u:%g <目录>)`。
+
+### 手机重启后没画面：其实是被锁屏挡住了
+
+**原因**：重启后停在锁屏，`am start` 起的 Activity 不会 resume，相机自然不开。
+另外 MIUI 剥了 shell(uid 2000) 的 `INJECT_EVENTS`，`adb shell input ...` 会报
+`SecurityException: Injecting to another application requires INJECT_EVENTS permission`。
+
+**处理**：唤醒/解锁必须走 root——
+
+```powershell
+adb shell su -c 'input keyevent KEYCODE_WAKEUP'
+adb shell su -c 'input swipe 540 2000 540 800 200'
+```
+
+`camera_live.ps1` 的 `Wake-Unlock` 已经这么做，并且在启动 APK 前会先跑一次。
+
 ### `adb install` 报 `INSTALL_FAILED_USER_RESTRICTED: Install canceled by user`
 
 **原因**：MIUI 限制普通 adb 安装（它要求开「USB 调试（安全设置）」）。

@@ -16,6 +16,7 @@
 - **滚轮缩放**：以圆心为基准 ±20px/格，尺寸和位置自动记到 `cam_bubble.cfg.json`
 - **右键菜单**：暂停/继续、固定位置大小、取消/恢复置顶、画面大小子菜单、镜像、重连、退出
 - **双层看门狗**：手机端相机被系统收走会自动重开；PC 端发现断流会自动重启 App
+- **重启自愈**：手机重启 ~30s 自动恢复（adb 走 `IP:5555`、自动解锁、重开相机）；PC 重启用 `tools/autostart.ps1` 装开机自启
 - **退出是真的退出**：点退出会关掉手机摄像头，并通知看门狗一起收工，不会自己弹回来
 
 ### 需要一直插着 USB 吗？
@@ -101,6 +102,7 @@
 - [架构与实现](docs/ARCHITECTURE.md)
 - [使用手册](docs/USAGE.md)
 - [手机侧准备（含 MIUI 白名单）](docs/DEVICE-SETUP.md)
+- [重启稳定性（实测）](docs/DURABILITY.md)
 - [排坑记录](docs/TROUBLESHOOTING.md)
 
 ## License

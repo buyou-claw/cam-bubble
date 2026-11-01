@@ -77,7 +77,7 @@ function Ensure-Connected {
     $devs = @((& $Adb devices 2>&1) -split "`r?`n" | Where-Object { $_ -match "\tdevice$" })
     if ($devs.Count -gt 0) { return (($devs[0] -split "\t")[0]) }
 
-    $cands = @()
+    $cands = @("${PhoneIp}:5555")      # 最稳：persist.adb.tcp.port=5555，重启后也在
     foreach ($l in (& $Adb mdns services 2>&1)) {
         $m = [regex]::Match($l, '(\d{1,3}(?:\.\d{1,3}){3}):(\d+)\s*$')
         if ($m.Success -and $l -match "_adb-tls-connect") { $cands += $m.Value }
@@ -104,13 +104,14 @@ function Ensure-Connected {
 }
 
 function Wake-Unlock([string]$s) {
-    & $Adb -s $s shell "input keyevent KEYCODE_WAKEUP" 2>&1 | Out-Null
-    Start-Sleep -Milliseconds 600
+    # MIUI 把 shell(2000) 的 INJECT_EVENTS 剥了，注入必须走 su
+    & $Adb -s $s shell "su -c 'input keyevent KEYCODE_WAKEUP'" 2>&1 | Out-Null
+    Start-Sleep -Milliseconds 700
     $kg = (& $Adb -s $s shell "dumpsys window | grep isKeyguardShowing" 2>&1) -join " "
     if ($kg -match "isKeyguardShowing=true") {
         Note "锁屏中，上滑解锁 ..."
-        & $Adb -s $s shell "input swipe 540 2000 540 700 200" 2>&1 | Out-Null
-        Start-Sleep -Milliseconds 1200
+        & $Adb -s $s shell "su -c 'input swipe 540 2000 540 800 200'" 2>&1 | Out-Null
+        Start-Sleep -Milliseconds 1400
     }
     & $Adb -s $s shell "svc power stayon true" 2>&1 | Out-Null
 }
@@ -179,6 +180,9 @@ function Start-CamStreamApp([string]$s) {
     }
     Note ("CAMERA " + ($grant -replace "\s+", " ").Trim())
 
+    # 重启后手机会停在锁屏，先唤醒解锁，否则 Activity 起不来、相机不开
+    Wake-Unlock $s
+
     & $Adb -s $s shell "su -c 'am force-stop dev.local.camstream'" 2>&1 | Out-Null
     Start-Sleep -Milliseconds 600
     & $Adb -s $s shell "am start -n dev.local.camstream/.MainActivity" 2>&1 | Out-Null
@@ -192,7 +196,7 @@ function Get-PhoneWifiIp([string]$s) {
 }
 
 function Get-ValidSerial {
-    """当前 serial 失效时（比如拔了 USB），重新挑一个在线的设备"""
+    # 当前 serial 失效时（比如拔了 USB），重新挑一个在线的设备
     $out = ((& $Adb devices 2>&1) -join "`n")
     if ($script:Serial -and $out -match ([regex]::Escape($script:Serial) + "\s+device")) {
         return $script:Serial
@@ -203,7 +207,7 @@ function Get-ValidSerial {
 }
 
 function Resolve-StreamUrl {
-    """优先走 Wi-Fi；取不到图就退回 adb forward 隧道（这样只插 USB 也能用）"""
+    # 优先走 Wi-Fi；取不到图就退回 adb forward 隧道（这样只插 USB 也能用）
     $ip = Get-PhoneWifiIp (Get-ValidSerial)
     if (Test-Stream $ip 1 8088) {
         return @{ ip = $ip; port = 8088; via = "wifi" }

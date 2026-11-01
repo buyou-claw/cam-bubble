@@ -17,14 +17,14 @@ sleep 1
 echo "== powerkeeper: 省电策略 = 无限制 =="
 cp /data/local/tmp/pk_user_mod.db /data/data/com.miui.powerkeeper/databases/user_configure.db
 rm -f /data/data/com.miui.powerkeeper/databases/user_configure.db-journal
-chown system:system /data/data/com.miui.powerkeeper/databases/user_configure.db
+chown $(stat -c %u:%g /data/data/com.miui.powerkeeper/databases) /data/data/com.miui.powerkeeper/databases/user_configure.db
 chmod 660 /data/data/com.miui.powerkeeper/databases/user_configure.db
 restorecon /data/data/com.miui.powerkeeper/databases/user_configure.db
 
 echo "== lbe: 自启动 = 允许 =="
 cp /data/local/tmp/lbe_wake_mod.db /data/data/com.lbe.security.miui/databases/wake_path.db
 rm -f /data/data/com.lbe.security.miui/databases/wake_path.db-journal
-chown system:system /data/data/com.lbe.security.miui/databases/wake_path.db
+chown $(stat -c %u:%g /data/data/com.lbe.security.miui/databases) /data/data/com.lbe.security.miui/databases/wake_path.db
 chmod 660 /data/data/com.lbe.security.miui/databases/wake_path.db
 restorecon /data/data/com.lbe.security.miui/databases/wake_path.db
 
