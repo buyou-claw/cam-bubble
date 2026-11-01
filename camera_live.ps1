@@ -43,6 +43,7 @@ $PhoneIp   = "192.168.31.130"
 $Title     = "CamBubble"
 $script:Serial = ""
 $script:PhoneIp = $PhoneIp
+$script:UrlPort = 8088
 $script:BubbleProc = $null
 
 function Step([string]$m) { Write-Host "== $m" -ForegroundColor Cyan }
@@ -190,11 +191,39 @@ function Get-PhoneWifiIp([string]$s) {
     return $PhoneIp
 }
 
-function Test-Stream([string]$ip, [int]$tries = 2) {
+function Get-ValidSerial {
+    """当前 serial 失效时（比如拔了 USB），重新挑一个在线的设备"""
+    $out = ((& $Adb devices 2>&1) -join "`n")
+    if ($script:Serial -and $out -match ([regex]::Escape($script:Serial) + "\s+device")) {
+        return $script:Serial
+    }
+    Note "原设备 $($script:Serial) 不在了，重新找"
+    $script:Serial = Ensure-Connected
+    return $script:Serial
+}
+
+function Resolve-StreamUrl {
+    """优先走 Wi-Fi；取不到图就退回 adb forward 隧道（这样只插 USB 也能用）"""
+    $ip = Get-PhoneWifiIp (Get-ValidSerial)
+    if (Test-Stream $ip 1 8088) {
+        return @{ ip = $ip; port = 8088; via = "wifi" }
+    }
+    Note "Wi-Fi 取流失败，改用 adb forward 隧道"
+    $port = 18088
+    & $Adb -s (Get-ValidSerial) forward "tcp:$port" tcp:8088 2>&1 | Out-Null
+    Start-Sleep -Milliseconds 400
+    if (Test-Stream "127.0.0.1" 2 $port) {
+        return @{ ip = "127.0.0.1"; port = $port; via = "adb-forward" }
+    }
+    return @{ ip = $ip; port = 8088; via = "wifi(failed)" }
+}
+
+function Test-Stream([string]$ip, [int]$tries = 2, [int]$port = 0) {
     if (-not $ip) { $ip = $script:PhoneIp }
+    if (-not $port) { $port = $script:UrlPort }
     for ($i = 0; $i -lt $tries; $i++) {
         try {
-            $r = Invoke-WebRequest -Uri "http://${ip}:8088/snapshot" -TimeoutSec 3 -UseBasicParsing
+            $r = Invoke-WebRequest -Uri "http://${ip}:${port}/snapshot" -TimeoutSec 3 -UseBasicParsing
             if ($r.StatusCode -eq 200 -and $r.Headers['Content-Type'] -match "image/jpeg" -and $r.RawContentLength -gt 2000) {
                 return $r.RawContentLength
             }
@@ -212,7 +241,7 @@ function Start-Bubble {
     # 每次启动前清掉"手动退出"标记
     Remove-Item $ExitFlag -Force -ErrorAction SilentlyContinue
     $pyArgs = @(
-        $BubblePy, "--source", "mjpeg", "--url", "http://$($script:PhoneIp):8088/video",
+        $BubblePy, "--source", "mjpeg", "--url", "http://$($script:PhoneIp):$($script:UrlPort)/video",
         "--rotation", "$Rotation",
         "--size", "$Size", "--x", "$X", "--y", "$Y",
         "--border", "$Border", "--config", $CfgFile,
@@ -253,14 +282,12 @@ if (-not $NoLaunch) {
 if (-not (Test-Path $BubblePy)) { throw "缺少 cam_bubble.py: $BubblePy" }
 
 if ($Source -eq "apk") {
-    $script:PhoneIp = Get-PhoneWifiIp $serial
-    Step "等 CamStream 出图 (http://$($script:PhoneIp):8088)"
-    $len = 0
-    for ($i = 0; $i -lt 12; $i++) {
-        $len = Test-Stream $script:PhoneIp 1
-        if ($len -gt 0) { Write-Host ("  出图 OK ({0:N0} bytes)" -f $len) -ForegroundColor Green; break }
-        Start-Sleep -Milliseconds 800
-    }
+    Step "选取流地址（Wi-Fi 优先，取不到就走 adb forward）"
+    $route = Resolve-StreamUrl
+    $script:PhoneIp = $route.ip
+    $script:UrlPort = $route.port
+    Write-Host ("  {0}  http://{1}:{2}" -f $route.via, $route.ip, $route.port) -ForegroundColor Green
+    $len = Test-Stream $script:PhoneIp 1 $script:UrlPort
     if ($len -le 0) { Write-Warning "CamStream 还没出画面（手机上如果弹了 MIUI 的相机授权框，点允许；或重跑一次）" }
     Step "启动圆形浮窗"
     Start-Bubble
@@ -301,24 +328,26 @@ if ($Watch) {
         if (Test-Path $ExitFlag) {
             Write-Host "浮窗被手动退出 -> 停止看门狗，关掉手机摄像头" -ForegroundColor Yellow
             try {
-                & $Adb -s $script:Serial shell "su -c 'am force-stop dev.local.camstream'" 2>&1 | Out-Null
+                $s = Get-ValidSerial
+                & $Adb -s $s shell "su -c 'am force-stop dev.local.camstream'" 2>&1 | Out-Null
             } catch { }
             Remove-Item $ExitFlag -Force -ErrorAction SilentlyContinue
             break
         }
 
         $alive = $script:BubbleProc -and -not $script:BubbleProc.HasExited
-        $len = Test-Stream $script:PhoneIp 1
+        $len = Test-Stream $script:PhoneIp 1 $script:UrlPort
         if ($len -le 0) {
             $fails++
             Note ("画面断了 ({0}/2)" -f $fails)
             if ($fails -ge 2) {
                 Write-Host "  -> 重启 CamStream" -ForegroundColor Yellow
                 try {
-                    $devs = ((& $Adb devices 2>&1) -join " ")
-                    if ($devs -notmatch "\sdevice\s") { $script:Serial = Ensure-Connected }
+                    $script:Serial = Get-ValidSerial
                     Start-CamStreamApp $script:Serial
-                    $script:PhoneIp = Get-PhoneWifiIp $script:Serial
+                    $route = Resolve-StreamUrl
+                    $script:PhoneIp = $route.ip
+                    $script:UrlPort = $route.port
                 } catch { Write-Warning "  重启失败: $($_.Exception.Message)" }
                 Start-Sleep -Seconds 2
                 $fails = 0

@@ -41,6 +41,16 @@
 .\camera_live.ps1 -VerifyOnly                      # 只验置顶
 ```
 
+## 2.5 取流地址是怎么选的
+
+启动时会自动选，日志里会打一行 `wifi http://…` 或 `adb-forward http://127.0.0.1:18088`：
+
+1. 先拿手机的 Wi-Fi IP，试 `http://IP:8088/snapshot`
+2. 不成 → `adb forward tcp:18088 tcp:8088`，改试 `http://127.0.0.1:18088/snapshot`（这条只要插 USB 就行）
+3. 看门狗里也一样：探活失败两次 → 重新解析设备（`Get-ValidSerial`）→ 重启 App → 重新选地址
+
+所以**拔掉 USB 后不需要重启工具**，下一轮看门狗会自动切到无线通道。
+
 ## 3. 浮窗操作与右键菜单
 
 | 菜单项 | 作用 | 描边颜色 |

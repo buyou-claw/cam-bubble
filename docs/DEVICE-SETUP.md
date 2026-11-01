@@ -24,6 +24,13 @@ $adb = "tools\scrcpy-win64-v5.0.1\adb.exe"
 
 插线 → 手机弹「允许 USB 调试吗」→ 允许。`adb devices` 里出现序列号即可。
 
+### 可以只用无线 / 只用 USB 吗
+
+- **只用无线**：`adb tcpip` 不需要，Android 11 的无线调试本身就是 TCP。开着无线调试，电脑上 `adb devices`
+  里就会出现 `IP:端口`，之后再也不用插线。端口每次开关会变，`tools\scan_ports.py` 可以扫。
+- **只用 USB**：也能跑。取流走 `adb forward` 隧道，浮窗照常工作。
+- 切换是无感的：脚本每次都重新解析 serial，USB 掉了自动用无线那条。
+
 ## 2. root（改 MIUI 白名单、装 APK 需要）
 
 ```powershell

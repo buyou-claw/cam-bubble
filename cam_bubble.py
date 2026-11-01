@@ -596,16 +596,20 @@ class Bubble:
         adb = getattr(self.args, "adb", "") or ""
         pkg = getattr(self.args, "stop_package", "") or ""
         if adb and pkg:
-            try:
-                cmd = [adb]
-                serial = getattr(self.args, "serial", "") or ""
-                if serial:
-                    cmd += ["-s", serial]
-                cmd += ["shell", "su -c 'am force-stop %s'" % pkg]
-                subprocess.run(cmd, timeout=10)
-                print("stopped phone camera: %s" % pkg, flush=True)
-            except Exception as exc:
-                print("stop phone camera failed: %s" % exc, file=sys.stderr)
+            serial = getattr(self.args, "serial", "") or ""
+            tail = ["shell", "su -c 'am force-stop %s'" % pkg]
+            tries = []
+            if serial:
+                tries.append([adb, "-s", serial] + tail)
+            tries.append([adb] + tail)          # serial 失效（拔了 USB）时退回自动选设备
+            for cmd in tries:
+                try:
+                    r = subprocess.run(cmd, timeout=10, capture_output=True)
+                    if r.returncode == 0:
+                        print("stopped phone camera: %s" % pkg, flush=True)
+                        break
+                except Exception as exc:
+                    print("stop phone camera failed: %s" % exc, file=sys.stderr)
         user32.PostQuitMessage(0)
 
     def show_menu(self, hwnd):
