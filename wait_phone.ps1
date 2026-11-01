@@ -5,7 +5,7 @@
 #   .\wait_phone.ps1 -Minutes 120    # 等 2 小时
 #
 # 逻辑: 每 5s 看 adb devices；每 25s 扫一次无线调试端口(30000-50000)并尝试 connect。
-#       一旦连上就调用 camera_live.ps1 起浮窗。
+#       一旦连上就调用 camera_live.ps1 起浮窗（带 -Watch 看门狗）。
 param(
     [int]$Minutes = 30,
     [int]$IntervalSec = 5,
@@ -31,7 +31,7 @@ while ((Get-Date) -lt $deadline) {
     $devs = Get-Devices
     if ($devs.Count -gt 0) {
         Write-Host ("手机已连接: {0}" -f ($devs -join ", ")) -ForegroundColor Green
-        & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Root "camera_live.ps1")
+        & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Root "camera_live.ps1") -Source apk -Watch
         exit $LASTEXITCODE
     }
 
