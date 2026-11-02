@@ -9,6 +9,7 @@
 │    自建 HTTP 服务 :8088                                            │
 │      GET /video     multipart/x-mixed-replace（每 45ms 推一帧）     │
 │      GET /snapshot  单帧 JPEG（探活/取证用）                        │
+│      GET /zoom?value=N  Camera1 setZoom(0..99)，真·相机变焦        │
 │    看门狗：2.5s 没有预览帧 → release 重开；无相机时每 3s 重试        │
 └───────────────────────────────┬──────────────────────────────────┘
                                 │ Wi-Fi / USB 局域网 TCP 8088
@@ -71,6 +72,8 @@ I Camera3-Device: disconnectImpl: E
 
 ### 4.1 分层窗口与圆形
 
+- 变焦在 `compose()` 里最后一步做：手机相机已经缩过画面的话这里只做居中裁方；`fallback_zoom>1` 时
+  再居中裁一小块放大（PC 端数字变焦），所以相机到顶也能继续放大
 - 窗口样式：`WS_POPUP | WS_VISIBLE` + `WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE`
   （`NOACTIVATE` = 点它不抢焦点，不打断工作）
 - 每帧：`UpdateLayeredWindow(..., ULW_ALPHA)`，DIB 是 **top-down 32bpp BGRA**，颜色已**预乘 alpha**

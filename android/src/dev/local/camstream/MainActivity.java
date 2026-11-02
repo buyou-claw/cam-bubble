@@ -32,6 +32,7 @@ import java.util.concurrent.atomic.AtomicReference;
  *   http://<手机IP>:8088/          状态页（纯文本）
  *   http://<手机IP>:8088/video     multipart/x-mixed-replace MJPEG
  *   http://<手机IP>:8088/snapshot  单帧 JPEG
+ *   http://<手机IP>:8088/zoom?value=N  相机变焦（也支持 ?delta=D）
  *
  * 注意：本文件刻意不用匿名内部类、也不用 private 的被内部类访问的成员 ——
  * 本机 build-tools 里的 d8 8.2.2-dev 在处理「匿名类 + 合成访问器(access$N)」时会抛 NPE，
@@ -58,6 +59,9 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
     volatile boolean reopening = false;
     volatile long lastFrameAt = 0;
     volatile long lastOpenAttempt = 0;
+    volatile boolean zoomSupported = false;
+    volatile int zoomMax = 0;
+    volatile int zoomValue = 0;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -230,6 +234,13 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
             camera.setPreviewCallbackWithBuffer(new FrameTask(this));
             camera.startPreview();
             lastFrameAt = SystemClock.elapsedRealtime();
+            try {
+                Camera.Parameters zp = camera.getParameters();
+                zoomSupported = zp.isZoomSupported();
+                zoomMax = zoomSupported ? zp.getMaxZoom() : 0;
+                zoomValue = zoomSupported ? zp.getZoom() : 0;
+            } catch (Throwable ignored) {
+            }
 
             Camera.CameraInfo ci = new Camera.CameraInfo();
             Camera.getCameraInfo(id, ci);
@@ -331,6 +342,33 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
         }
     }
 
+    /** 相机变焦：Camera1 的 setZoom，档位 0..getMaxZoom() */
+    void applyZoom(int v) {
+        Camera cam = camera;
+        if (cam == null) {
+            return;
+        }
+        try {
+            Camera.Parameters p = cam.getParameters();
+            if (!p.isZoomSupported()) {
+                zoomSupported = false;
+                zoomMax = 0;
+                return;
+            }
+            zoomSupported = true;
+            zoomMax = p.getMaxZoom();
+            int z = Math.max(0, Math.min(zoomMax, v));
+            if (z == zoomValue) {
+                return;
+            }
+            p.setZoom(z);
+            cam.setParameters(p);
+            zoomValue = z;
+            setStatus("zoom " + zoomValue + "/" + zoomMax);
+        } catch (Throwable ignored) {
+        }
+    }
+
     // ---------------------------------------------------------------- HTTP
     static class ServerTask implements Runnable {
         final MainActivity app;
@@ -413,6 +451,26 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
                         out.flush();
                         Thread.sleep(45);
                     }
+                } else if (path.startsWith("/zoom")) {
+                    String q = path.indexOf('?') >= 0 ? path.substring(path.indexOf('?') + 1) : "";
+                    int target = app.zoomValue;
+                    try {
+                        for (String kv : q.split("&")) {
+                            if (kv.startsWith("value=")) {
+                                target = Integer.parseInt(kv.substring(6));
+                            } else if (kv.startsWith("delta=")) {
+                                target = app.zoomValue + Integer.parseInt(kv.substring(6));
+                            }
+                        }
+                    } catch (Throwable ignored) {
+                    }
+                    app.applyZoom(target);
+                    String body = "zoom=" + app.zoomValue + "/" + app.zoomMax
+                            + " supported=" + app.zoomSupported + "\n";
+                    byte[] zb = body.getBytes(StandardCharsets.US_ASCII);
+                    out.write(("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: "
+                            + zb.length + "\r\nConnection: close\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
+                    out.write(zb);
                 } else if (path.startsWith("/snapshot")) {
                     byte[] jpg = app.latestJpeg.get();
                     if (jpg == null) {
@@ -427,7 +485,9 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
                     }
                 } else {
                     String body = "CamStream\nport=" + PORT + "\nsize=" + app.previewW + "x" + app.previewH
-                            + "\nsensor_rotation=" + app.orientation + "\nendpoints: /video /snapshot\n";
+                            + "\nsensor_rotation=" + app.orientation
+                            + "\nzoom=" + app.zoomValue + "/" + app.zoomMax + " supported=" + app.zoomSupported
+                            + "\nendpoints: /video /snapshot /zoom?value=N\n";
                     byte[] b = body.getBytes(StandardCharsets.US_ASCII);
                     out.write(("HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: "
                             + b.length + "\r\nConnection: close\r\n\r\n").getBytes(StandardCharsets.US_ASCII));

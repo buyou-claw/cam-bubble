@@ -54,6 +54,9 @@ WM_LBUTTONDOWN = 0x0201
 WM_LBUTTONUP = 0x0202
 WM_RBUTTONUP = 0x0205
 WM_MOUSEWHEEL = 0x020A
+WM_GESTURE = 0x0119
+WM_TOUCH = 0x0240
+VK_CONTROL = 0x11
 WM_KEYDOWN = 0x0100
 VK_ESCAPE = 0x1B
 
@@ -107,6 +110,17 @@ class SIZE(ctypes.Structure):
     _fields_ = [("cx", wt.LONG), ("cy", wt.LONG)]
 
 
+class GESTUREINFO(ctypes.Structure):
+    _fields_ = [("cbSize", wt.UINT), ("dwFlags", wt.DWORD), ("dwID", wt.DWORD),
+                ("hwndTarget", wt.HWND), ("ptsLocation", POINT),
+                ("dwInstanceID", wt.DWORD), ("dwSequenceID", wt.DWORD),
+                ("ullArguments", ctypes.c_ulonglong), ("cbExtraArgs", wt.UINT)]
+
+
+class GESTURECONFIG(ctypes.Structure):
+    _fields_ = [("dwID", wt.DWORD), ("dwWant", wt.DWORD), ("dwBlock", wt.DWORD)]
+
+
 class MSG(ctypes.Structure):
     _fields_ = [("hwnd", wt.HWND), ("message", wt.UINT), ("wParam", wt.WPARAM),
                 ("lParam", wt.LPARAM), ("time", wt.DWORD), ("pt", POINT)]
@@ -145,6 +159,12 @@ _proto(user32.AppendMenuW, wt.BOOL, wt.HMENU, wt.UINT, ctypes.c_size_t, wt.LPCWS
 _proto(user32.TrackPopupMenu, ctypes.c_int, wt.HMENU, wt.UINT,
        ctypes.c_int, ctypes.c_int, ctypes.c_int, wt.HWND, ctypes.c_void_p)
 _proto(user32.DestroyMenu, wt.BOOL, wt.HMENU)
+_proto(user32.GetKeyState, ctypes.c_short, ctypes.c_int)
+_proto(user32.GetGestureInfo, wt.BOOL, wt.HANDLE, ctypes.POINTER(GESTUREINFO))
+_proto(user32.CloseGestureInfoHandle, wt.BOOL, wt.HANDLE)
+_proto(user32.RegisterTouchWindow, wt.BOOL, wt.HWND, wt.ULONG)
+_proto(user32.SetGestureConfig, wt.BOOL, wt.HWND, wt.DWORD, wt.UINT,
+       ctypes.POINTER(GESTURECONFIG), wt.UINT)
 _proto(user32.PostMessageW, wt.BOOL, wt.HWND, wt.UINT, wt.WPARAM, wt.LPARAM)
 _proto(user32.SetForegroundWindow, wt.BOOL, wt.HWND)
 _proto(user32.GetCursorPos, wt.BOOL, ctypes.POINTER(POINT))
@@ -357,7 +377,100 @@ class Bubble:
         self.locked = False
         self.topmost = True
         self.mirror = bool(getattr(args, "mirror", True))
+        # 变焦：cam_zoom 是手机相机档位；fallback_zoom 是手机不支持变焦时的 PC 端裁切倍数
+        self.cam_zoom = 0
+        self.cam_zoom_max = 0
+        self.cam_zoom_supported = None      # None=还不知道
+        self.fallback_zoom = 1.0
+        self._gest_last = 0
+        self.base_url = self._base_url(args)
         self.frozen = None
+
+    # -- 变焦 ------------------------------------------------------
+    @staticmethod
+    def _base_url(args):
+        url = getattr(args, "url", "") or ""
+        if url.endswith("/video"):
+            return url[:-len("/video")]
+        return url.rstrip("/")
+
+    def probe_zoom(self):
+        """问一下手机端变焦能力（后台线程，不阻塞 UI）"""
+        def run():
+            try:
+                import urllib.request
+                with urllib.request.urlopen(self.base_url + "/", timeout=5) as r:
+                    txt = r.read().decode("ascii", "ignore")
+                for line in txt.splitlines():
+                    if line.startswith("zoom="):
+                        val, rest = line[5:].split("/", 1)
+                        self.cam_zoom = int(val)
+                        self.cam_zoom_max = int(rest.split()[0])
+                        self.cam_zoom_supported = "supported=true" in rest
+                        print("zoom capability: %s/%s supported=%s" %
+                              (self.cam_zoom, self.cam_zoom_max, self.cam_zoom_supported), flush=True)
+            except Exception as exc:
+                print("probe_zoom failed:", exc, flush=True)
+        threading.Thread(target=run, daemon=True).start()
+
+    def _send_zoom(self, value):
+        url = "%s/zoom?value=%d" % (self.base_url, value)
+        def run():
+            try:
+                import urllib.request
+                with urllib.request.urlopen(url, timeout=5) as r:
+                    r.read(64)
+            except Exception:
+                pass
+        threading.Thread(target=run, daemon=True).start()
+
+    def zoom_step(self, direction):
+        """direction: +1 放大 / -1 缩小"""
+        if self.locked:
+            return
+        if self.cam_zoom_supported:
+            step = max(1, self.cam_zoom_max // 20) if self.cam_zoom_max else 1
+            if direction > 0:
+                if self.cam_zoom < self.cam_zoom_max:
+                    self.cam_zoom = min(self.cam_zoom_max, self.cam_zoom + step)
+                    self._send_zoom(self.cam_zoom)
+                else:
+                    # 相机已到顶，继续 PC 端裁切放大
+                    self.fallback_zoom = min(4.0, self.fallback_zoom * 1.12)
+            else:
+                if self.fallback_zoom > 1.001:
+                    self.fallback_zoom = max(1.0, self.fallback_zoom / 1.12)
+                elif self.cam_zoom > 0:
+                    self.cam_zoom = max(0, self.cam_zoom - step)
+                    self._send_zoom(self.cam_zoom)
+            self.save_cfg()
+        else:
+            # 手机不支持变焦：纯 PC 端裁切
+            if direction > 0:
+                self.fallback_zoom = min(6.0, self.fallback_zoom * 1.15)
+            else:
+                self.fallback_zoom = max(1.0, self.fallback_zoom / 1.15)
+            self.save_cfg()
+        self.paint()
+
+    def zoom_reset(self):
+        if self.cam_zoom_supported:
+            self.cam_zoom = 0
+            self._send_zoom(0)
+        self.fallback_zoom = 1.0
+        self.save_cfg()
+        self.paint()
+
+    def cam_ratio(self):
+        """Camera1 的档位换算倍数：1 + zoom/100"""
+        return 1.0 + self.cam_zoom / 100.0
+
+    def zoom_text(self):
+        total = self.cam_ratio() * self.fallback_zoom
+        if self.cam_zoom_supported:
+            return "%.1fx（相机 %d/%d，裁切 %.2fx）" % (
+                total, self.cam_zoom, self.cam_zoom_max, self.fallback_zoom)
+        return "%.2fx（PC 裁切）" % self.fallback_zoom
 
     # -- 配置
     def load_cfg(self):
@@ -369,6 +482,8 @@ class Bubble:
             self.size = int(c.get("size", self.size))
             self.x = int(c.get("x", self.x))
             self.y = int(c.get("y", self.y))
+            self.cam_zoom = int(c.get("cam_zoom", self.cam_zoom))
+            self.fallback_zoom = float(c.get("fallback_zoom", self.fallback_zoom))
         except Exception:
             pass
 
@@ -377,7 +492,9 @@ class Bubble:
             return
         try:
             with open(self.cfg_path, "w", encoding="utf-8") as fh:
-                json.dump({"size": self.size, "x": self.x, "y": self.y}, fh)
+                json.dump({"size": self.size, "x": self.x, "y": self.y,
+                           "cam_zoom": self.cam_zoom,
+                           "fallback_zoom": round(self.fallback_zoom, 3)}, fh)
         except Exception:
             pass
 
@@ -411,6 +528,11 @@ class Bubble:
             left, top = (w - side) // 2, (h - side) // 2
         if self.mirror:
             frame = frame.transpose(Image.FLIP_LEFT_RIGHT)
+        if self.fallback_zoom > 1.001:
+            side2 = max(8, int(side / self.fallback_zoom))
+            left += (side - side2) // 2
+            top += (side - side2) // 2
+            side = side2
         sq = frame.crop((left, top, left + side, top + side)).resize((size, size), Image.LANCZOS)
         rg = sq.convert("RGBA")
         rg.putalpha(self.mask(size))
@@ -512,7 +634,31 @@ class Bubble:
             if self.locked:
                 return 0
             delta = ctypes.c_short((wparam >> 16) & 0xFFFF).value
-            self.set_size(self.size + (20 if delta > 0 else -20))
+            ctrl = user32.GetKeyState(VK_CONTROL) & 0x8000
+            if ctrl:
+                self.set_size(self.size + (20 if delta > 0 else -20))   # Ctrl+滚轮 = 改圆形大小
+            else:
+                self.zoom_step(1 if delta > 0 else -1)                  # 滚轮 = 变焦
+            return 0
+        if msg == WM_GESTURE:
+            h = lparam
+            gi = GESTUREINFO()
+            gi.cbSize = ctypes.sizeof(GESTUREINFO)
+            if user32.GetGestureInfo(ctypes.c_void_p(h), ctypes.byref(gi)):
+                try:
+                    if gi.dwID == 3:                       # GID_ZOOM
+                        if gi.dwFlags & 0x1:               # GF_BEGIN
+                            self._gest_last = gi.ullArguments
+                        elif self._gest_last:
+                            ratio = gi.ullArguments / float(self._gest_last)
+                            if ratio > 1.15:
+                                self.zoom_step(1)
+                                self._gest_last = gi.ullArguments
+                            elif ratio < 0.87:
+                                self.zoom_step(-1)
+                                self._gest_last = gi.ullArguments
+                finally:
+                    user32.CloseGestureInfoHandle(ctypes.c_void_p(h))
             return 0
         if msg == WM_RBUTTONUP:
             self.show_menu(hwnd)
@@ -558,6 +704,8 @@ class Bubble:
 
     def reconnect(self):
         """扔掉旧连接，重开读流线程（mjpeg / adb / jpeg-dir 三种源都支持）"""
+        if self.cam_zoom_supported is None:
+            self.probe_zoom()          # 上次没问到变焦能力，重连时再问一次
         status = getattr(self.src, "status", "")
         kind = getattr(self, "source_kind", "mjpeg")
         self.src.stop()
@@ -615,6 +763,7 @@ class Bubble:
     def show_menu(self, hwnd):
         ID_TOGGLE_PAUSE, ID_TOGGLE_LOCK, ID_TOGGLE_TOP = 1001, 1002, 1003
         ID_MIRROR, ID_RECONNECT, ID_QUIT = 1020, 1030, 1099
+        ID_ZOOM_IN, ID_ZOOM_OUT, ID_ZOOM_RESET = 1040, 1041, 1042
         ID_SIZE_BASE = 1200
 
         menu = user32.CreatePopupMenu()
@@ -633,6 +782,10 @@ class Bubble:
                            "取消置顶" if self.topmost else "恢复置顶")
         user32.AppendMenuW(menu, MF_SEPARATOR, 0, None)
         user32.AppendMenuW(menu, MF_POPUP, int(sub) if not hasattr(sub, "value") else int(sub.value), "画面大小")
+        user32.AppendMenuW(menu, MF_STRING, ID_ZOOM_IN, "放大（滚轮上）")
+        user32.AppendMenuW(menu, MF_STRING, ID_ZOOM_OUT, "缩小（滚轮下）")
+        user32.AppendMenuW(menu, MF_STRING, ID_ZOOM_RESET, "缩放复位  当前 " + self.zoom_text())
+        user32.AppendMenuW(menu, MF_SEPARATOR, 0, None)
         user32.AppendMenuW(menu, MF_STRING | (MF_CHECKED if self.mirror else 0), ID_MIRROR, "镜像画面")
         user32.AppendMenuW(menu, MF_SEPARATOR, 0, None)
         user32.AppendMenuW(menu, MF_STRING, ID_RECONNECT, "重新连接摄像头")
@@ -662,6 +815,12 @@ class Bubble:
             self.set_size(self.size)          # 触发重绘（描边颜色变化）
         elif cmd == ID_TOGGLE_TOP:
             self.set_topmost(not self.topmost)
+        elif cmd == ID_ZOOM_IN:
+            self.zoom_step(1)
+        elif cmd == ID_ZOOM_OUT:
+            self.zoom_step(-1)
+        elif cmd == ID_ZOOM_RESET:
+            self.zoom_reset()
         elif cmd == ID_MIRROR:
             self.mirror = not self.mirror
             self.paint()
@@ -720,6 +879,16 @@ class Bubble:
 
         user32.SetWindowPos(self._hwnd, TOP, self.x, self.y, 0, 0,
                             SWP_NOSIZE | 0x0010)
+        # 触控板双指捏合 -> WM_GESTURE
+        try:
+            gc = (GESTURECONFIG * 1)()
+            gc[0].dwID = 0            # 0 = 全部手势
+            gc[0].dwWant = 0x00000001  # GC_ZOOM
+            gc[0].dwBlock = 0
+            user32.SetGestureConfig(self._hwnd, 0, 1, gc, ctypes.sizeof(GESTURECONFIG))
+            user32.RegisterTouchWindow(self._hwnd, 0)
+        except Exception:
+            pass
         user32.SetTimer(self._hwnd, 1, 33, None)
         user32.ShowWindow(self._hwnd, 5)  # SW_SHOW
 
@@ -803,6 +972,10 @@ def main():
 
     if args.seconds:
         threading.Timer(args.seconds, lambda: user32.PostQuitMessage(0)).start()
+
+    app.probe_zoom()
+    if app.cam_zoom and getattr(app, "cam_zoom_supported", None) is not False:
+        app._send_zoom(app.cam_zoom)
 
     app.run()
     src.stop()

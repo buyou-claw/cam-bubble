@@ -13,7 +13,8 @@
 - **不装第三方 App**：手机端是本仓库现编的 20 KB `CamStream.apk`，只做「开前置摄像头 → 推 MJPEG」
 - **圆外真透明**：Win32 分层窗口 + 预乘 alpha（不是抠色），圆外的桌面完全不受影响
 - **永远置顶**：`WS_EX_TOPMOST`，可随时在菜单里取消/恢复
-- **滚轮缩放**：以圆心为基准 ±20px/格，尺寸和位置自动记到 `cam_bubble.cfg.json`
+- **真·相机变焦**：滚轮直接调手机相机的 `setZoom`（0~99 档，约 1x→2x），到顶再自动接 PC 端裁切，最多约 8x；触控板双指捏合也行
+- **滚轮改大小**：`Ctrl+滚轮` 以圆心为基准 ±20px/格，尺寸和位置自动记到 `cam_bubble.cfg.json`
 - **右键菜单**：暂停/继续、固定位置大小、取消/恢复置顶、画面大小子菜单、镜像、重连、退出
 - **双层看门狗**：手机端相机被系统收走会自动重开；PC 端发现断流会自动重启 App
 - **重启自愈**：手机重启 ~30s 自动恢复（adb 走 `IP:5555`、自动解锁、重开相机）；PC 重启用 `tools/autostart.ps1` 装开机自启
@@ -48,7 +49,9 @@
 
 | 操作 | 效果 |
 |---|---|
-| 滚轮上/下 | 圆形直径 ±20px（圆心不动） |
+| 滚轮上/下 | **变焦**（放大/缩小，手机相机档位 + PC 裁切） |
+| Ctrl + 滚轮 | 圆形直径 ±20px（圆心不动） |
+| 触控板双指捏合 | 变焦（同上） |
 | 左键拖动 | 移动位置 |
 | 右键 | 打开菜单 |
 
@@ -65,7 +68,7 @@
 │  ├─ AndroidManifest.xml
 │  ├─ debug.keystore      # 调试签名（密码 android / 别名 androiddebugkey）
 │  └─ src/dev/local/camstream/MainActivity.java
-├─ dist/camstream.apk     # 预编译好的手机端 APK
+├─ dist/camstream.apk     # 预编译好的手机端 APK（v1.1，自带 /zoom 变焦接口）
 ├─ docs/
 │  ├─ ARCHITECTURE.md     # 数据链路、浮窗实现、看门狗与退出协议
 │  ├─ USAGE.md            # 参数、菜单、状态文件

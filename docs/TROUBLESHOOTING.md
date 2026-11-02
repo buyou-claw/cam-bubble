@@ -139,6 +139,19 @@ adb connect 192.168.31.130:<扫到的端口>
 **处理**：`compose()` 里已经预乘；自检 `python tools\dev_compose_check.py` 会打印
 `corner alpha 0 / center alpha 255`，并生成白底合成图看边缘。
 
+### 滚轮没反应 / 变的是窗口大小而不是画面
+
+**原因**：改动后**滚轮默认是变焦**，改尺寸要按 `Ctrl+滚轮`；另一个可能是手机端 APK 还是旧版
+（旧版没有 `/zoom`，状态页里不会出现 `zoom=0/99` 这一行）。
+
+**处理**：
+
+```powershell
+curl http://<IP>:8088/          # 有 zoom=x/max supported=true 就是新版
+.\build_apk.ps1                # 重新编译
+.\camera_live.ps1 -Reinstall    # 重装
+```
+
 ### 尺寸不对，`--size 380` 量出来只有 304
 
 **原因**：进程不是 DPI 感知的，Windows 按 125% 缩放把窗口缩小了。

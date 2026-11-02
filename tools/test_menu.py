@@ -22,7 +22,7 @@ user32.PostMessageW.argtypes = [wt.HWND, wt.UINT, wt.WPARAM, wt.LPARAM]
 user32.SetCursorPos.argtypes = [ctypes.c_int, ctypes.c_int]
 
 title = sys.argv[1] if len(sys.argv) > 1 else "CamBubble"
-out = sys.argv[2] if len(sys.argv) > 2 else r"E:\ai_project\redmik20\evidence\menu.png"
+out = sys.argv[2] if len(sys.argv) > 2 else r"E:\ai_project\redmik20\build\menu.png"
 
 hits = []
 
@@ -55,7 +55,7 @@ print("posted WM_RBUTTONUP")
 time.sleep(1.0)
 
 subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
-                "-File", r"E:\ai_project\redmik20\evidence\proof_topmost.ps1",
+                "-File", r"E:\ai_project\redmik20\tools\proof_topmost.ps1",
                 "-Title", title, "-Out", out],
                capture_output=True)
 print("screenshot ->", out)
